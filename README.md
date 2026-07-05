@@ -1,28 +1,46 @@
-# DASP-Net Starter Files
+# DASP-Net
 
-## Install
+**DASP-Net** stands for **Degradation-Aware Spatial-Frequency Prompting Network**.
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
-```
+This repository contains the implementation of a lightweight image enhancement framework for **low-light image enhancement**. The main idea is to improve a simple U-Net by adding several guidance maps extracted from the input image itself.
 
-## Run prompt map generation
+Instead of using only the RGB image as input, DASP-Net uses:
 
-```bash
-python src/prompts.py --image data/test_low_light.jpg --out results/prompts
-```
+- RGB image
+- Illumination map
+- Edge map
+- Frequency/detail map
+- Noise estimation map
 
-Expected output files:
+Therefore, the proposed model receives a **7-channel input** and predicts a 3-channel enhanced RGB image.
+
+---
+
+## Project Goal
+
+Low-light images often suffer from poor visibility, low contrast, noise amplification, color distortion, and loss of fine details. Many deep learning methods improve image quality but require complex architectures or high computational cost.
+
+This project aims to build a simple and lightweight method that improves low-light images by using additional spatial and frequency-aware prompt maps while keeping the model architecture close to a standard U-Net.
+
+---
+
+## Method Overview
+
+Given a low-light RGB image, DASP-Net first extracts four guidance maps:
+
+1. **Illumination Map**  
+   Captures the brightness distribution of the image.
+
+2. **Edge Map**  
+   Extracted using the Sobel operator to preserve object boundaries.
+
+3. **Frequency/Detail Map**  
+   Extracted using the Laplacian operator to highlight high-frequency details.
+
+4. **Noise Estimation Map**  
+   Computed using the residual between the grayscale image and its Gaussian-smoothed version.
+
+The final input is:
 
 ```text
-results/prompts/original.png
-results/prompts/illumination.png
-results/prompts/edge.png
-results/prompts/frequency.png
-results/prompts/noise.png
-```
-# DASP-Net
-# DASP-Net
+RGB + Illumination + Edge + Frequency + Noise = 7 channels
