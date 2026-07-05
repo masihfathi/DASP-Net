@@ -1,11 +1,10 @@
 venv/
 .venv/
-env/
-ENV/
-
 __pycache__/
 *.pyc
 
-.DS_Store
-
+data/
 results/
+*.pth
+
+.DS_Store
