@@ -9,7 +9,11 @@ from torchvision.utils import save_image
 
 from dataset import PairedLowLightDataset
 from metrics import calculate_metrics, calculate_ssim
-from model_unet import build_baseline_unet, build_dasp_net
+from model_unet import (
+    build_baseline_unet,
+    build_dasp_net,
+    build_prompt_gated_dasp_net,
+)
 
 
 def get_device():
@@ -82,6 +86,46 @@ def save_sample_images(low_rgb, pred, target, output_dir, epoch, mode):
     save_image(comparison, save_path, nrow=low_rgb.size(0))
 
 
+def get_model_input(mode, low_rgb, dasp_input):
+    """
+    Select correct model input based on training mode.
+
+    baseline:
+        uses RGB input only.
+
+    dasp:
+        uses 7-channel input:
+        RGB + illumination + edge + frequency + noise.
+
+    pgdasp:
+        uses 7-channel input:
+        RGB + illumination + edge + frequency + noise.
+    """
+    if mode == "baseline":
+        return low_rgb
+
+    if mode in ["dasp", "pgdasp"]:
+        return dasp_input
+
+    raise ValueError(f"Unknown mode: {mode}")
+
+
+def build_model(mode):
+    """
+    Build model according to selected mode.
+    """
+    if mode == "baseline":
+        return build_baseline_unet()
+
+    if mode == "dasp":
+        return build_dasp_net()
+
+    if mode == "pgdasp":
+        return build_prompt_gated_dasp_net()
+
+    raise ValueError("mode must be one of: 'baseline', 'dasp', or 'pgdasp'")
+
+
 def evaluate(model, loader, device, mode, output_dir, epoch):
     """
     Evaluate model on validation/test dataset.
@@ -101,12 +145,11 @@ def evaluate(model, loader, device, mode, output_dir, epoch):
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
 
-            if mode == "baseline":
-                model_input = low_rgb
-            elif mode == "dasp":
-                model_input = dasp_input
-            else:
-                raise ValueError(f"Unknown mode: {mode}")
+            model_input = get_model_input(
+                mode=mode,
+                low_rgb=low_rgb,
+                dasp_input=dasp_input,
+            )
 
             pred = model(model_input)
 
@@ -162,23 +205,17 @@ def train(args):
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=args.num_workers,
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=args.num_workers,
     )
 
-    if args.mode == "baseline":
-        model = build_baseline_unet()
-    elif args.mode == "dasp":
-        model = build_dasp_net()
-    else:
-        raise ValueError("mode must be either 'baseline' or 'dasp'")
-
+    model = build_model(args.mode)
     model = model.to(device)
 
     optimizer = torch.optim.Adam(
@@ -209,10 +246,11 @@ def train(args):
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
 
-            if args.mode == "baseline":
-                model_input = low_rgb
-            else:
-                model_input = dasp_input
+            model_input = get_model_input(
+                mode=args.mode,
+                low_rgb=low_rgb,
+                dasp_input=dasp_input,
+            )
 
             pred = model(model_input)
 
@@ -282,6 +320,7 @@ def train(args):
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_metrics": val_metrics,
+                "args": vars(args),
             },
             last_checkpoint,
         )
@@ -297,6 +336,7 @@ def train(args):
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "val_metrics": val_metrics,
+                    "args": vars(args),
                 },
                 best_checkpoint,
             )
@@ -305,9 +345,17 @@ def train(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train U-Net baseline or DASP-Net on LOL Dataset.")
+    parser = argparse.ArgumentParser(
+        description="Train U-Net baseline, raw DASP-Net, or PG-DASP-Net on LOL Dataset."
+    )
 
-    parser.add_argument("--mode", type=str, required=True, choices=["baseline", "dasp"])
+    parser.add_argument(
+        "--mode",
+        type=str,
+        required=True,
+        choices=["baseline", "dasp", "pgdasp"],
+        help="Training mode: baseline, dasp, or pgdasp.",
+    )
 
     parser.add_argument("--train-low-dir", type=str, required=True)
     parser.add_argument("--train-high-dir", type=str, required=True)
@@ -327,6 +375,7 @@ def main():
 
     parser.add_argument("--output-dir", type=str, default="results/training")
     parser.add_argument("--log-interval", type=int, default=20)
+    parser.add_argument("--num-workers", type=int, default=0)
 
     args = parser.parse_args()
 
