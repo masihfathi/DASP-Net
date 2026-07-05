@@ -69,7 +69,7 @@ def total_loss(pred, target, lambda_ssim=0.2, lambda_grad=0.1):
     }
 
 
-def save_sample_images(low_rgb, pred, target, output_dir, epoch, mode):
+def save_sample_images(low_rgb, pred, target, output_dir, epoch, mode, prompt_mode="full"):
     """
     Save visual comparison:
     low image | enhanced image | target image
@@ -82,7 +82,12 @@ def save_sample_images(low_rgb, pred, target, output_dir, epoch, mode):
 
     comparison = torch.cat([low_rgb, pred, target], dim=0)
 
-    save_path = os.path.join(output_dir, f"{mode}_epoch_{epoch:03d}.png")
+    if mode in ["dasp", "pgdasp"]:
+        filename = f"{mode}_{prompt_mode}_epoch_{epoch:03d}.png"
+    else:
+        filename = f"{mode}_epoch_{epoch:03d}.png"
+
+    save_path = os.path.join(output_dir, filename)
     save_image(comparison, save_path, nrow=low_rgb.size(0))
 
 
@@ -126,7 +131,53 @@ def build_model(mode):
     raise ValueError("mode must be one of: 'baseline', 'dasp', or 'pgdasp'")
 
 
-def evaluate(model, loader, device, mode, output_dir, epoch):
+def apply_prompt_ablation(dasp_input, prompt_mode):
+    """
+    Apply prompt ablation on 7-channel DASP input.
+
+    Channel order:
+        0: R
+        1: G
+        2: B
+        3: illumination
+        4: edge
+        5: frequency
+        6: noise
+
+    prompt_mode:
+        full         -> keep all prompt maps
+        none         -> remove all prompt maps
+        illumination -> keep only illumination map
+        edge         -> keep only edge map
+        frequency    -> keep only frequency/detail map
+        noise        -> keep only noise map
+    """
+    if prompt_mode == "full":
+        return dasp_input
+
+    output = dasp_input.clone()
+
+    # Remove all prompt maps first
+    output[:, 3:7, :, :] = 0.0
+
+    if prompt_mode == "none":
+        return output
+
+    if prompt_mode == "illumination":
+        output[:, 3:4, :, :] = dasp_input[:, 3:4, :, :]
+    elif prompt_mode == "edge":
+        output[:, 4:5, :, :] = dasp_input[:, 4:5, :, :]
+    elif prompt_mode == "frequency":
+        output[:, 5:6, :, :] = dasp_input[:, 5:6, :, :]
+    elif prompt_mode == "noise":
+        output[:, 6:7, :, :] = dasp_input[:, 6:7, :, :]
+    else:
+        raise ValueError(f"Unknown prompt_mode: {prompt_mode}")
+
+    return output
+
+
+def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full"):
     """
     Evaluate model on validation/test dataset.
     """
@@ -144,6 +195,9 @@ def evaluate(model, loader, device, mode, output_dir, epoch):
             low_rgb = batch["low_rgb"].to(device)
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
+
+            if mode in ["dasp", "pgdasp"]:
+                dasp_input = apply_prompt_ablation(dasp_input, prompt_mode)
 
             model_input = get_model_input(
                 mode=mode,
@@ -170,6 +224,7 @@ def evaluate(model, loader, device, mode, output_dir, epoch):
                     output_dir=output_dir,
                     epoch=epoch,
                     mode=mode,
+                    prompt_mode=prompt_mode,
                 )
                 first_batch_saved = True
 
@@ -186,6 +241,7 @@ def train(args):
     device = get_device()
     print("Device:", device)
     print("Training mode:", args.mode)
+    print("Prompt mode:", args.prompt_mode)
 
     train_dataset = PairedLowLightDataset(
         low_dir=args.train_low_dir,
@@ -246,6 +302,9 @@ def train(args):
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
 
+            if args.mode in ["dasp", "pgdasp"]:
+                dasp_input = apply_prompt_ablation(dasp_input, args.prompt_mode)
+
             model_input = get_model_input(
                 mode=args.mode,
                 low_rgb=low_rgb,
@@ -295,6 +354,7 @@ def train(args):
             mode=args.mode,
             output_dir=str(sample_dir),
             epoch=epoch,
+            prompt_mode=args.prompt_mode,
         )
 
         print("=" * 70)
@@ -312,11 +372,17 @@ def train(args):
         )
         print("=" * 70)
 
-        last_checkpoint = checkpoint_dir / f"{args.mode}_last.pth"
+        if args.mode in ["dasp", "pgdasp"]:
+            checkpoint_prefix = f"{args.mode}_{args.prompt_mode}"
+        else:
+            checkpoint_prefix = args.mode
+
+        last_checkpoint = checkpoint_dir / f"{checkpoint_prefix}_last.pth"
         torch.save(
             {
                 "epoch": epoch,
                 "mode": args.mode,
+                "prompt_mode": args.prompt_mode,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_metrics": val_metrics,
@@ -328,11 +394,12 @@ def train(args):
         if val_metrics["psnr"] > best_psnr:
             best_psnr = val_metrics["psnr"]
 
-            best_checkpoint = checkpoint_dir / f"{args.mode}_best.pth"
+            best_checkpoint = checkpoint_dir / f"{checkpoint_prefix}_best.pth"
             torch.save(
                 {
                     "epoch": epoch,
                     "mode": args.mode,
+                    "prompt_mode": args.prompt_mode,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "val_metrics": val_metrics,
@@ -355,6 +422,14 @@ def main():
         required=True,
         choices=["baseline", "dasp", "pgdasp"],
         help="Training mode: baseline, dasp, or pgdasp.",
+    )
+
+    parser.add_argument(
+        "--prompt-mode",
+        type=str,
+        default="full",
+        choices=["full", "none", "illumination", "edge", "frequency", "noise"],
+        help="Prompt ablation mode for DASP/PG-DASP models.",
     )
 
     parser.add_argument("--train-low-dir", type=str, required=True)

@@ -1,66 +1,80 @@
 # DASP-Net
 
-**DASP-Net** stands for **Degradation-Aware Spatial-Frequency Prompting Network**.
+**DASP-Net** is a lightweight low-light image enhancement research project.
 
-This repository contains a lightweight deep learning framework for **low-light image enhancement**. The main idea is to improve a simple U-Net model by adding several guidance maps extracted directly from the input image.
+Current research direction:
 
-Instead of using only the RGB image, DASP-Net uses:
+> A residual-gated lightweight network for low-light image enhancement, with an experimental analysis of hand-crafted visual prompt maps.
 
-- RGB image
+The project investigates whether hand-crafted prompt maps can help a lightweight network improve low-light images.
+
+Prompt maps studied in this repository:
+
 - Illumination map
 - Edge map
 - Frequency/detail map
 - Noise estimation map
 
-Therefore, the proposed model receives a **7-channel input** and predicts a **3-channel enhanced RGB image**.
+The main experimental finding so far is:
+
+> Hand-crafted prompt maps are not always beneficial when directly or uniformly injected into the network. In the current experiments, the best result is obtained by **PG-DASP-Net v2 without prompt maps**, which suggests that the residual-gated architecture itself improves reconstruction, while prompt maps require adaptive selection or weighting.
 
 ---
 
 ## Project Goal
 
-Low-light images often suffer from:
+Low-light images often suffer from poor visibility, low contrast, noise amplification, color distortion, and loss of fine details.
 
-- poor visibility
-- low contrast
-- noise amplification
-- color distortion
-- loss of fine details
+This repository compares:
 
-Many deep learning methods improve image quality, but they often require complex architectures or high computational cost. This project aims to build a simple and lightweight method that improves low-light images by using additional spatial and frequency-aware prompt maps while keeping the model architecture close to a standard U-Net.
+1. Baseline U-Net
+2. Raw DASP-Net
+3. PG-DASP-Net
+4. PG-DASP-Net v2
+5. Prompt ablation variants
 
 ---
 
 ## Method Overview
 
-Given a low-light RGB image, DASP-Net first extracts four guidance maps.
-
-### 1. Illumination Map
-
-The illumination map captures the brightness distribution of the image.
-
-### 2. Edge Map
-
-The edge map is extracted using the Sobel operator and helps preserve object boundaries.
-
-### 3. Frequency/Detail Map
-
-The frequency/detail map is extracted using the Laplacian operator and highlights high-frequency details.
-
-### 4. Noise Estimation Map
-
-The noise estimation map is computed using the residual between the grayscale image and its Gaussian-smoothed version.
-
-The final input is:
+### Baseline U-Net
 
 ```text
-RGB + Illumination + Edge + Frequency + Noise = 7 channels
+RGB image -> U-Net -> Enhanced RGB image
 ```
 
-The model output is:
+### Raw DASP-Net
+
+Raw DASP-Net concatenates RGB and four prompt maps:
 
 ```text
-7-channel input -> Lightweight U-Net -> 3-channel enhanced image
+RGB + Illumination + Edge + Frequency + Noise = 7-channel input
 ```
+
+Then the 7-channel input is passed directly to a U-Net.
+
+### PG-DASP-Net v2
+
+PG-DASP-Net v2 uses a residual identity gate:
+
+```text
+F' = F × (1 + gamma × M)
+```
+
+where:
+
+- `F` is the RGB feature
+- `M` is the modulation map from the prompt branch
+- `gamma` is a learnable parameter initialized to zero
+
+At the start of training:
+
+```text
+gamma = 0
+F' ≈ F
+```
+
+This lets the model start close to the baseline and gradually learn how much the guidance branch should affect RGB features.
 
 ---
 
@@ -86,19 +100,12 @@ DASP-Net/
     train.py
     inference.py
     load_checkpoint.py
+    summarize_checkpoints.py
+    make_qualitative_results.py
     download_lol_zip.py
     download_lol_hf.py
 
   results/
-    prompts/
-    baseline_test/
-      checkpoints/
-      samples/
-    dasp_test/
-      checkpoints/
-      samples/
-    inference/
-
   requirements.txt
   README.md
   .gitignore
@@ -108,21 +115,15 @@ DASP-Net/
 
 ## Installation
 
-Create and activate a virtual environment:
-
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-```
 
-Install dependencies:
-
-```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 ```
 
-The `requirements.txt` file should contain:
+Recommended `requirements.txt`:
 
 ```text
 opencv-python
@@ -137,15 +138,11 @@ pillow
 
 ## Download LOL Dataset
 
-The LOL dataset can be downloaded from Hugging Face using the provided script.
-
-Run:
-
 ```bash
 python3 src/download_lol_zip.py
 ```
 
-After extraction, the expected structure is:
+Expected structure:
 
 ```text
 data/LOL/lol_dataset/our485/low
@@ -154,7 +151,7 @@ data/LOL/lol_dataset/eval15/low
 data/LOL/lol_dataset/eval15/high
 ```
 
-The dataset split is:
+Dataset split used:
 
 ```text
 Training set: 485 paired images
@@ -165,15 +162,11 @@ Testing set:  15 paired images
 
 ## Generate Prompt Maps
 
-To generate DASP guidance maps for a sample low-light image:
-
 ```bash
-python3 src/prompts.py \
-  --image data/test_low_light.jpg \
-  --out results/prompts
+python3 src/prompts.py   --image data/test_low_light.jpg   --out results/prompts
 ```
 
-Expected output files:
+Expected output:
 
 ```text
 results/prompts/original.png
@@ -183,21 +176,14 @@ results/prompts/frequency.png
 results/prompts/noise.png
 ```
 
-These files are useful for visually checking whether the prompt maps are generated correctly.
-
 ---
 
 ## Test Dataset Loader
 
-### Train Set
+### Train set
 
 ```bash
-python3 src/dataset.py \
-  --low-dir data/LOL/lol_dataset/our485/low \
-  --high-dir data/LOL/lol_dataset/our485/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2
+python3 src/dataset.py   --low-dir data/LOL/lol_dataset/our485/low   --high-dir data/LOL/lol_dataset/our485/high   --height 256   --width 256   --batch-size 2
 ```
 
 Expected output:
@@ -210,15 +196,10 @@ DASP input shape: torch.Size([2, 7, 256, 256])
 Target shape: torch.Size([2, 3, 256, 256])
 ```
 
-### Test Set
+### Test set
 
 ```bash
-python3 src/dataset.py \
-  --low-dir data/LOL/lol_dataset/eval15/low \
-  --high-dir data/LOL/lol_dataset/eval15/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 1
+python3 src/dataset.py   --low-dir data/LOL/lol_dataset/eval15/low   --high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 1
 ```
 
 Expected output:
@@ -235,325 +216,186 @@ Target shape: torch.Size([1, 3, 256, 256])
 
 ## Test Model Architecture
 
-Run:
-
 ```bash
 python3 src/model_unet.py
 ```
 
-Expected output:
+The script tests:
+
+- Baseline U-Net
+- Raw DASP-Net
+- PG-DASP-Net v2
+
+Expected output shape for all models:
 
 ```text
-Device: cpu
-
-Baseline U-Net
-Input shape: torch.Size([1, 3, 256, 256])
-Output shape: torch.Size([1, 3, 256, 256])
-Parameters: 7849667
-
-DASP-Net
-Input shape: torch.Size([1, 7, 256, 256])
-Output shape: torch.Size([1, 3, 256, 256])
-Parameters: 7850819
+torch.Size([1, 3, 256, 256])
 ```
-
-Current parameter count:
-
-```text
-Baseline U-Net: 7,849,667 parameters
-DASP-Net:       7,850,819 parameters
-```
-
-DASP-Net adds only:
-
-```text
-1,152 extra parameters
-```
-
-This means the proposed model adds four guidance maps with almost no increase in model complexity.
 
 ---
 
-## Evaluation Metrics
+## Metrics
 
-The project currently uses three evaluation metrics:
-
-- **MAE**: Mean Absolute Error
-- **PSNR**: Peak Signal-to-Noise Ratio
-- **SSIM**: Structural Similarity Index Measure
-
-These metrics are implemented in:
+Implemented in:
 
 ```text
 src/metrics.py
 ```
 
-To test the metrics file:
+Metrics:
+
+- MAE
+- PSNR
+- SSIM
+
+Test:
 
 ```bash
 python3 src/metrics.py
 ```
 
-Expected output:
+---
 
-```text
-Metrics test:
-MAE: ...
-PSNR: ...
-SSIM: ...
+## Training
+
+### Baseline U-Net
+
+```bash
+python3 src/train.py   --mode baseline   --train-low-dir data/LOL/lol_dataset/our485/low   --train-high-dir data/LOL/lol_dataset/our485/high   --val-low-dir data/LOL/lol_dataset/eval15/low   --val-high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 2   --epochs 20   --output-dir results/baseline_20epoch
+```
+
+### Raw DASP-Net
+
+```bash
+python3 src/train.py   --mode dasp   --train-low-dir data/LOL/lol_dataset/our485/low   --train-high-dir data/LOL/lol_dataset/our485/high   --val-low-dir data/LOL/lol_dataset/eval15/low   --val-high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 2   --epochs 20   --output-dir results/dasp_20epoch
+```
+
+### PG-DASP-Net v2 with all prompt maps
+
+```bash
+python3 src/train.py   --mode pgdasp   --prompt-mode full   --train-low-dir data/LOL/lol_dataset/our485/low   --train-high-dir data/LOL/lol_dataset/our485/high   --val-low-dir data/LOL/lol_dataset/eval15/low   --val-high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 2   --epochs 20   --output-dir results/pgdasp_v2_20epoch
+```
+
+### PG-DASP-Net v2 without prompt maps
+
+```bash
+python3 src/train.py   --mode pgdasp   --prompt-mode none   --train-low-dir data/LOL/lol_dataset/our485/low   --train-high-dir data/LOL/lol_dataset/our485/high   --val-low-dir data/LOL/lol_dataset/eval15/low   --val-high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 2   --epochs 20   --output-dir results/ablation_none_20epoch
 ```
 
 ---
 
-## Train Baseline U-Net
+## Prompt Ablation
 
-Run a quick one-epoch baseline test:
+The `--prompt-mode` argument controls which prompt maps are active.
+
+Available options:
+
+```text
+full
+none
+illumination
+edge
+frequency
+noise
+```
+
+Example:
 
 ```bash
-python3 src/train.py \
-  --mode baseline \
-  --train-low-dir data/LOL/lol_dataset/our485/low \
-  --train-high-dir data/LOL/lol_dataset/our485/high \
-  --val-low-dir data/LOL/lol_dataset/eval15/low \
-  --val-high-dir data/LOL/lol_dataset/eval15/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2 \
-  --epochs 1 \
-  --output-dir results/baseline_test
-```
-
-After training, the following files should be generated:
-
-```text
-results/baseline_test/checkpoints/baseline_best.pth
-results/baseline_test/checkpoints/baseline_last.pth
-results/baseline_test/samples/baseline_epoch_001.png
-```
-
-The sample image contains:
-
-```text
-low-light input | enhanced output | ground truth
-```
-
----
-
-## Train DASP-Net
-
-Run a quick one-epoch DASP-Net test:
-
-```bash
-python3 src/train.py \
-  --mode dasp \
-  --train-low-dir data/LOL/lol_dataset/our485/low \
-  --train-high-dir data/LOL/lol_dataset/our485/high \
-  --val-low-dir data/LOL/lol_dataset/eval15/low \
-  --val-high-dir data/LOL/lol_dataset/eval15/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2 \
-  --epochs 1 \
-  --output-dir results/dasp_test
-```
-
-After training, the following files should be generated:
-
-```text
-results/dasp_test/checkpoints/dasp_best.pth
-results/dasp_test/checkpoints/dasp_last.pth
-results/dasp_test/samples/dasp_epoch_001.png
+python3 src/train.py   --mode pgdasp   --prompt-mode edge   --train-low-dir data/LOL/lol_dataset/our485/low   --train-high-dir data/LOL/lol_dataset/our485/high   --val-low-dir data/LOL/lol_dataset/eval15/low   --val-high-dir data/LOL/lol_dataset/eval15/high   --height 256   --width 256   --batch-size 2   --epochs 20   --output-dir results/ablation_edge_20epoch
 ```
 
 ---
 
 ## Checkpoint Files
 
-The `.pth` files are PyTorch checkpoint files.
+`.pth` files are PyTorch checkpoint files and should not be opened directly as text.
 
-Examples:
-
-```text
-baseline_best.pth
-baseline_last.pth
-dasp_best.pth
-dasp_last.pth
-```
-
-These files are binary model files and should not be opened directly in a text editor such as VS Code. They should be loaded using `torch.load`.
-
----
-
-## Inspect a Checkpoint
-
-To inspect a saved checkpoint:
+Inspect a checkpoint:
 
 ```bash
-python3 src/load_checkpoint.py \
-  --checkpoint results/baseline_test/checkpoints/baseline_best.pth
+python3 src/load_checkpoint.py   --checkpoint results/baseline_20epoch/checkpoints/baseline_best.pth
 ```
 
-Expected output:
-
-```text
-Checkpoint loaded successfully.
-Keys:
-- epoch
-- mode
-- model_state_dict
-- optimizer_state_dict
-- val_metrics
-
-Mode: baseline
-Epoch: 1
-Validation metrics: {'mae': ..., 'psnr': ..., 'ssim': ...}
-```
-
-For DASP-Net:
+Summarize all best checkpoints:
 
 ```bash
-python3 src/load_checkpoint.py \
-  --checkpoint results/dasp_test/checkpoints/dasp_best.pth
+python3 src/summarize_checkpoints.py --root results
 ```
 
 ---
 
-## Run Inference
+## Current Best Results
 
-After training, inference can be performed on a low-light image using a saved checkpoint.
+The following results are based on the best checkpoint of each experiment, selected by the highest validation PSNR.
 
-### Baseline U-Net Inference
+| Model / Setting | Best Epoch | MAE ↓ | PSNR ↑ | SSIM ↑ |
+|---|---:|---:|---:|---:|
+| Baseline U-Net | 15 | 0.0960 | 20.3474 | 0.8438 |
+| Raw DASP-Net | 11 | 0.0991 | 20.1702 | 0.8191 |
+| PG-DASP-Net v2, full prompts | 9 | 0.1001 | 19.7719 | 0.8315 |
+| PG-DASP-Net v2, no prompts | 19 | **0.0937** | **20.6343** | **0.8476** |
+
+---
+
+## Prompt Ablation Results
+
+| Prompt Setting | Best Epoch | MAE ↓ | PSNR ↑ | SSIM ↑ |
+|---|---:|---:|---:|---:|
+| No prompt maps | 19 | **0.0937** | **20.6343** | **0.8476** |
+| Illumination only | 17 | 0.0995 | 19.9450 | 0.8427 |
+| Edge only | 16 | 0.0957 | 20.2751 | 0.8401 |
+| Frequency only | 12 | 0.1027 | 19.9277 | 0.8338 |
+| Noise only | 7 | 0.0979 | 19.8506 | 0.8327 |
+| Full prompts | 9 | 0.1001 | 19.7719 | 0.8315 |
+
+---
+
+## Qualitative Results
+
+Generate comparison figures:
 
 ```bash
-python3 src/inference.py \
-  --mode baseline \
-  --checkpoint results/baseline_test/checkpoints/baseline_best.pth \
-  --image data/LOL/lol_dataset/eval15/low/146.png \
-  --out results/inference/baseline_146.png
+python3 src/make_qualitative_results.py   --low-dir data/LOL/lol_dataset/eval15/low   --high-dir data/LOL/lol_dataset/eval15/high   --baseline-checkpoint results/baseline_20epoch/checkpoints/baseline_best.pth   --dasp-checkpoint results/dasp_20epoch/checkpoints/dasp_best.pth   --pgdasp-checkpoint results/pgdasp_v2_20epoch/checkpoints/pgdasp_best.pth   --height 256   --width 256   --num-samples 5   --out-dir results/qualitative
 ```
 
 Output:
 
 ```text
-results/inference/baseline_146.png
+results/qualitative/combined_qualitative_results.png
 ```
 
-### DASP-Net Inference
-
-```bash
-python3 src/inference.py \
-  --mode dasp \
-  --checkpoint results/dasp_test/checkpoints/dasp_best.pth \
-  --image data/LOL/lol_dataset/eval15/low/146.png \
-  --out results/inference/dasp_146.png
-```
-
-Output:
+Each row:
 
 ```text
-results/inference/dasp_146.png
+Low-light input | U-Net | Raw DASP | PG-DASP v2 | Ground Truth
 ```
 
 ---
 
-## Output Files
+## Inference
 
-Training and inference generate the following files:
-
-```text
-results/
-  baseline_test/
-    checkpoints/
-      baseline_best.pth
-      baseline_last.pth
-    samples/
-      baseline_epoch_001.png
-
-  dasp_test/
-    checkpoints/
-      dasp_best.pth
-      dasp_last.pth
-    samples/
-      dasp_epoch_001.png
-
-  inference/
-    baseline_146.png
-    dasp_146.png
-```
-
-Image files such as `.png` can be opened normally.  
-Checkpoint files such as `.pth` should be loaded with PyTorch.
-
----
-
-## Recommended Quick Test Order
-
-A good order for testing the project is:
+### Baseline U-Net
 
 ```bash
-python3 src/prompts.py \
-  --image data/test_low_light.jpg \
-  --out results/prompts
+python3 src/inference.py   --mode baseline   --checkpoint results/baseline_20epoch/checkpoints/baseline_best.pth   --image data/LOL/lol_dataset/eval15/low/146.png   --out results/inference/baseline_146.png
 ```
 
-```bash
-python3 src/model_unet.py
-```
+### Raw DASP-Net
 
 ```bash
-python3 src/dataset.py \
-  --low-dir data/LOL/lol_dataset/our485/low \
-  --high-dir data/LOL/lol_dataset/our485/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2
+python3 src/inference.py   --mode dasp   --checkpoint results/dasp_20epoch/checkpoints/dasp_best.pth   --image data/LOL/lol_dataset/eval15/low/146.png   --out results/inference/dasp_146.png
 ```
 
-```bash
-python3 src/metrics.py
-```
+### PG-DASP-Net
 
 ```bash
-python3 src/train.py \
-  --mode baseline \
-  --train-low-dir data/LOL/lol_dataset/our485/low \
-  --train-high-dir data/LOL/lol_dataset/our485/high \
-  --val-low-dir data/LOL/lol_dataset/eval15/low \
-  --val-high-dir data/LOL/lol_dataset/eval15/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2 \
-  --epochs 1 \
-  --output-dir results/baseline_test
-```
-
-```bash
-python3 src/train.py \
-  --mode dasp \
-  --train-low-dir data/LOL/lol_dataset/our485/low \
-  --train-high-dir data/LOL/lol_dataset/our485/high \
-  --val-low-dir data/LOL/lol_dataset/eval15/low \
-  --val-high-dir data/LOL/lol_dataset/eval15/high \
-  --height 256 \
-  --width 256 \
-  --batch-size 2 \
-  --epochs 1 \
-  --output-dir results/dasp_test
+python3 src/inference.py   --mode pgdasp   --checkpoint results/pgdasp_v2_20epoch/checkpoints/pgdasp_best.pth   --image data/LOL/lol_dataset/eval15/low/146.png   --out results/inference/pgdasp_146.png
 ```
 
 ---
 
 ## Git Ignore
-
-The following folders and files should not be committed to GitHub:
-
-```text
-venv/
-data/
-results/
-*.pth
-__pycache__/
-```
 
 Recommended `.gitignore`:
 
@@ -573,64 +415,42 @@ results/
 .DS_Store
 ```
 
-If these files were already added to Git, remove them from tracking:
+Remove already-tracked large files:
 
 ```bash
 git rm -r --cached venv data results
 git add .gitignore
-git commit -m "Ignore data, results, and model checkpoints"
+git commit -m "Ignore data, results, and checkpoints"
 ```
 
 ---
 
-## Current Implementation Status
+## Research Direction
 
-| Component | Status |
-|---|---|
-| Prompt map generation | Implemented |
-| LOL dataset downloader | Implemented |
-| LOL paired dataset loader | Implemented |
-| Baseline U-Net | Implemented |
-| DASP-Net 7-channel model | Implemented |
-| MAE metric | Implemented |
-| PSNR metric | Implemented |
-| SSIM metric | Implemented |
-| Training script | Implemented |
-| Checkpoint loading | Implemented |
-| Inference script | Implemented |
-| Full test script | Planned |
-| Ablation study | Planned |
-| Result table generation | Planned |
-| Paper-ready figures | Planned |
-
----
-
-## Paper Direction
-
-This repository is part of a research project on low-light image enhancement.
-
-The current paper title is:
+Current paper title:
 
 ```text
-DASP-Net: Degradation-Aware Spatial-Frequency Prompting Network for Low-Light Image Enhancement
+A Residual-Gated Lightweight Network for Low-Light Image Enhancement: An Analysis of Hand-Crafted Visual Prompts
 ```
 
-Main contribution:
+Persian title:
 
 ```text
-A lightweight low-light image enhancement model that uses illumination, edge, frequency, and noise-aware prompt maps to guide a simple U-Net with minimal additional parameters.
+یک شبکه سبک با gate باقی‌مانده برای بهبود تصاویر کم‌نور: تحلیل اثر نقشه‌های راهنمای دستی
 ```
+
+Main conclusion:
+
+> Residual-gated feature modulation improves low-light image enhancement, while hand-crafted prompt maps do not consistently improve performance in the current setup.
 
 ---
 
 ## Citation
 
-If you use this repository, please cite it as:
-
 ```bibtex
 @misc{fathi2026daspnet,
   author = {Fathi, Masih},
-  title = {DASP-Net: Degradation-Aware Spatial-Frequency Prompting Network for Low-Light Image Enhancement},
+  title = {A Residual-Gated Lightweight Network for Low-Light Image Enhancement: An Analysis of Hand-Crafted Visual Prompts},
   year = {2026},
   howpublished = {\url{https://github.com/masihfathi/DASP-Net}}
 }
@@ -638,23 +458,30 @@ If you use this repository, please cite it as:
 
 ---
 
-## License
-
-This project is currently under active development.  
-A license file will be added later.
-
----
-
 ## Status
 
 This project is under active development.
 
-Current focus:
+Implemented:
 
-```text
-1. Train baseline U-Net
-2. Train DASP-Net
-3. Compare PSNR, SSIM, and MAE
-4. Generate qualitative comparison images
-5. Prepare experiment tables for the paper
-```
+- Prompt map generation
+- LOL dataset downloader
+- Paired LOL dataset loader
+- Baseline U-Net
+- Raw DASP-Net
+- PG-DASP-Net v2
+- Residual identity gate
+- MAE, PSNR, and SSIM
+- Training script
+- Prompt ablation
+- Checkpoint summarization
+- Qualitative result generation
+- Inference script
+
+Next steps:
+
+- Improve adaptive prompt weighting
+- Add learned prompt selection
+- Add more datasets
+- Add LPIPS and NIQE
+- Prepare paper-ready final figures
