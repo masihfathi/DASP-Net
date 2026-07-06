@@ -1,0 +1,9 @@
+# Extra research/evaluation dependencies for paper metrics and figures
+# Install with:
+# pip install -r requirements_research.txt
+
+pandas
+matplotlib
+lpips
+piq
+thop
