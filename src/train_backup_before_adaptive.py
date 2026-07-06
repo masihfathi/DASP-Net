@@ -1,9 +1,7 @@
 import argparse
 import os
-import random
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -15,28 +13,7 @@ from model_unet import (
     build_baseline_unet,
     build_dasp_net,
     build_prompt_gated_dasp_net,
-    build_adaptive_prompt_gated_dasp_net,
 )
-
-
-def set_seed(seed: int):
-    """
-    Set random seed for reproducibility.
-    """
-    if seed is None or seed < 0:
-        return
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-    # These flags make CUDA more deterministic, but may reduce speed.
-    if torch.backends.cudnn.is_available():
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
 
 def get_device():
@@ -105,7 +82,7 @@ def save_sample_images(low_rgb, pred, target, output_dir, epoch, mode, prompt_mo
 
     comparison = torch.cat([low_rgb, pred, target], dim=0)
 
-    if mode in ["dasp", "pgdasp", "apgdasp"]:
+    if mode in ["dasp", "pgdasp"]:
         filename = f"{mode}_{prompt_mode}_epoch_{epoch:03d}.png"
     else:
         filename = f"{mode}_epoch_{epoch:03d}.png"
@@ -128,16 +105,11 @@ def get_model_input(mode, low_rgb, dasp_input):
     pgdasp:
         uses 7-channel input:
         RGB + illumination + edge + frequency + noise.
-
-    apgdasp:
-        uses 7-channel input:
-        RGB + illumination + edge + frequency + noise.
-        The model learns adaptive weights for prompt maps internally.
     """
     if mode == "baseline":
         return low_rgb
 
-    if mode in ["dasp", "pgdasp", "apgdasp"]:
+    if mode in ["dasp", "pgdasp"]:
         return dasp_input
 
     raise ValueError(f"Unknown mode: {mode}")
@@ -156,12 +128,7 @@ def build_model(mode):
     if mode == "pgdasp":
         return build_prompt_gated_dasp_net()
 
-    if mode == "apgdasp":
-        return build_adaptive_prompt_gated_dasp_net()
-
-    raise ValueError(
-        "mode must be one of: 'baseline', 'dasp', 'pgdasp', or 'apgdasp'"
-    )
+    raise ValueError("mode must be one of: 'baseline', 'dasp', or 'pgdasp'")
 
 
 def apply_prompt_ablation(dasp_input, prompt_mode):
@@ -210,45 +177,6 @@ def apply_prompt_ablation(dasp_input, prompt_mode):
     return output
 
 
-def get_checkpoint_prefix(mode, prompt_mode):
-    """
-    Create checkpoint filename prefix.
-    """
-    if mode == "baseline":
-        return "baseline"
-
-    if mode == "dasp":
-        return f"dasp_{prompt_mode}"
-
-    if mode == "pgdasp":
-        return f"pgdasp_{prompt_mode}"
-
-    if mode == "apgdasp":
-        if prompt_mode == "full":
-            return "apgdasp"
-        return f"apgdasp_{prompt_mode}"
-
-    return mode
-
-
-def get_adaptive_prompt_weights(model):
-    """
-    Return latest adaptive prompt weights if the model supports it.
-
-    The Adaptive PG-DASP-Net stores:
-        model.last_prompt_weights
-
-    shape:
-        B x 4
-    """
-    if hasattr(model, "last_prompt_weights"):
-        weights = model.last_prompt_weights
-        if weights is not None:
-            return weights.detach().cpu()
-
-    return None
-
-
 def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full"):
     """
     Evaluate model on validation/test dataset.
@@ -260,9 +188,6 @@ def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full")
     total_ssim = 0.0
     total_count = 0
 
-    prompt_weight_sum = None
-    prompt_weight_count = 0
-
     first_batch_saved = False
 
     with torch.no_grad():
@@ -271,7 +196,7 @@ def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full")
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
 
-            if mode in ["dasp", "pgdasp", "apgdasp"]:
+            if mode in ["dasp", "pgdasp"]:
                 dasp_input = apply_prompt_ablation(dasp_input, prompt_mode)
 
             model_input = get_model_input(
@@ -281,13 +206,6 @@ def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full")
             )
 
             pred = model(model_input)
-
-            weights = get_adaptive_prompt_weights(model)
-            if weights is not None:
-                if prompt_weight_sum is None:
-                    prompt_weight_sum = torch.zeros(weights.size(1))
-                prompt_weight_sum += weights.sum(dim=0)
-                prompt_weight_count += weights.size(0)
 
             metrics = calculate_metrics(pred, target)
 
@@ -316,26 +234,14 @@ def evaluate(model, loader, device, mode, output_dir, epoch, prompt_mode="full")
         "ssim": total_ssim / total_count,
     }
 
-    if prompt_weight_sum is not None and prompt_weight_count > 0:
-        avg_prompt_weights = prompt_weight_sum / prompt_weight_count
-        avg_metrics["prompt_weights"] = {
-            "illumination": avg_prompt_weights[0].item(),
-            "edge": avg_prompt_weights[1].item(),
-            "frequency": avg_prompt_weights[2].item(),
-            "noise": avg_prompt_weights[3].item(),
-        }
-
     return avg_metrics
 
 
 def train(args):
-    set_seed(args.seed)
-
     device = get_device()
     print("Device:", device)
     print("Training mode:", args.mode)
     print("Prompt mode:", args.prompt_mode)
-    print("Seed:", args.seed)
 
     train_dataset = PairedLowLightDataset(
         low_dir=args.train_low_dir,
@@ -382,8 +288,6 @@ def train(args):
 
     best_psnr = -1.0
 
-    checkpoint_prefix = get_checkpoint_prefix(args.mode, args.prompt_mode)
-
     for epoch in range(1, args.epochs + 1):
         model.train()
 
@@ -398,7 +302,7 @@ def train(args):
             dasp_input = batch["dasp_input"].to(device)
             target = batch["target"].to(device)
 
-            if args.mode in ["dasp", "pgdasp", "apgdasp"]:
+            if args.mode in ["dasp", "pgdasp"]:
                 dasp_input = apply_prompt_ablation(dasp_input, args.prompt_mode)
 
             model_input = get_model_input(
@@ -466,18 +370,12 @@ def train(args):
             f"Val PSNR: {val_metrics['psnr']:.4f} | "
             f"Val SSIM: {val_metrics['ssim']:.4f}"
         )
-
-        if "prompt_weights" in val_metrics:
-            weights = val_metrics["prompt_weights"]
-            print(
-                "Adaptive prompt weights | "
-                f"illumination: {weights['illumination']:.4f} | "
-                f"edge: {weights['edge']:.4f} | "
-                f"frequency: {weights['frequency']:.4f} | "
-                f"noise: {weights['noise']:.4f}"
-            )
-
         print("=" * 70)
+
+        if args.mode in ["dasp", "pgdasp"]:
+            checkpoint_prefix = f"{args.mode}_{args.prompt_mode}"
+        else:
+            checkpoint_prefix = args.mode
 
         last_checkpoint = checkpoint_dir / f"{checkpoint_prefix}_last.pth"
         torch.save(
@@ -515,18 +413,15 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Train U-Net baseline, raw DASP-Net, PG-DASP-Net, "
-            "or Adaptive PG-DASP-Net on LOL Dataset."
-        )
+        description="Train U-Net baseline, raw DASP-Net, or PG-DASP-Net on LOL Dataset."
     )
 
     parser.add_argument(
         "--mode",
         type=str,
         required=True,
-        choices=["baseline", "dasp", "pgdasp", "apgdasp"],
-        help="Training mode: baseline, dasp, pgdasp, or apgdasp.",
+        choices=["baseline", "dasp", "pgdasp"],
+        help="Training mode: baseline, dasp, or pgdasp.",
     )
 
     parser.add_argument(
@@ -534,7 +429,7 @@ def main():
         type=str,
         default="full",
         choices=["full", "none", "illumination", "edge", "frequency", "noise"],
-        help="Prompt ablation mode for DASP/PG-DASP/APG-DASP models.",
+        help="Prompt ablation mode for DASP/PG-DASP models.",
     )
 
     parser.add_argument("--train-low-dir", type=str, required=True)
@@ -556,13 +451,6 @@ def main():
     parser.add_argument("--output-dir", type=str, default="results/training")
     parser.add_argument("--log-interval", type=int, default=20)
     parser.add_argument("--num-workers", type=int, default=0)
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed. Use -1 to disable fixed seed.",
-    )
 
     args = parser.parse_args()
 
