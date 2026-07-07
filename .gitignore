@@ -7,4 +7,5 @@ data/
 results/
 *.pth
 
-.DS_Storerun_external_dataset_evaluation.sh
+.DS_Store
+run_external_dataset_evaluation.sh
