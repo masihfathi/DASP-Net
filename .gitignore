@@ -12,3 +12,7 @@ run_external_dataset_evaluation.sh
 build_local_training_figures_and_zip.sh
 final_results_for_paper_update_with_local_figures.zip
 final_results_for_paper_update.zip
+scripts/
+build_prompt_analysis_figures.sh
+literature_exact_comparison_results.zip
+prompt_analysis_results.zip
